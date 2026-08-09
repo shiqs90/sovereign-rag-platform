@@ -68,7 +68,7 @@ layers, and the evaluation suite fails the build if any of them leaks.
 | Cluster | AKS, 3 node pools (`system` / `apps` / `gpu`) | GPU node is the scarce resource; taint keeps everything else off it |
 | Inference | vLLM, `Qwen2.5-7B-Instruct-AWQ` | see *Model selection* below |
 | Embeddings | TEI, `BAAI/bge-m3`, **on CPU** | see *Why embeddings run on CPU* below |
-| Vector store | Qdrant, one collection per tenant | Named-vector alternative would put both tenants in one collection — a worse blast radius |
+| Vector store | Qdrant, one collection per tenant | Filtered-search correctness; see *Vector store* below. Named-vector alternative would put both tenants in one collection — a worse blast radius |
 | Observability | Langfuse v2 (traces, spans, scores) | Per-trace, not per-request: an agentic turn is N GPU calls |
 | Ingress | ingress-nginx + cert-manager, self-signed CA | Proves the Issuer → Certificate → Secret path without owning DNS |
 
@@ -111,6 +111,33 @@ service maps marker → chunk metadata → `PDPL Art. 9`.
 This makes hallucinated citations *structurally impossible* rather than statistically unlikely,
 and turns citation accuracy from an LLM-judge problem into a schema check. It is the single most
 important design call in the system.
+
+### Vector store — three of the four candidates are eliminated by constraints
+
+| Candidate | Verdict |
+|---|---|
+| **Pinecone** | Eliminated by the thesis. Managed SaaS means the corpus leaves the boundary — indexing data-protection law on someone else's infrastructure contradicts the premise. Not a tradeoff; a contradiction. |
+| **FAISS** | Wrong category. A library, not a database: no server, no auth, no concurrent writers, metadata filtering not first-class. The index would live *inside* `rag-service`, so ingest becomes redeploy — or you write a server around it and have rebuilt a worse Qdrant. |
+| **OpenSearch** | Viable, priced out. Better hybrid BM25+vector, which suits a corpus users cite by exact string. But JVM heap alone wants 2–4 GiB against Qdrant's ~1 GiB budget, in a pool where TEI already takes 3 GiB. Forces a bigger VM against a 6/10 regional vCPU quota. |
+| **pgvector** | The strongest objection — Postgres is already running for Langfuse, so it costs zero extra pods. Rejected because it makes the *observability* database the tenant data store: Langfuse filling its disk would take retrieval down, and a compromised Langfuse pod would sit inside the corpus. |
+
+**Why Qdrant wins on the one axis that matters here: filtered-search correctness.**
+
+The tenant filter is a security boundary, not a preference. Stores that implement filtering as
+*post*-filtering — retrieve global top-k, then discard non-matching rows — fail silently under a
+tenant filter: if this tenant's chunks miss the global top-k, the retriever returns fewer than k
+results, or none, and degrades exactly as the corpus grows. Qdrant applies payload filters
+*during* HNSW traversal, so a tenant-scoped search returns the true top-k **within that tenant**.
+
+That is what makes `recall@5 ≥ 0.90` a real gate — it is measured under the filter, and
+post-filtering would make the number a lie.
+
+Secondary: Rust single binary, no JVM, ~1 GiB; collections are a native isolation unit, so
+one-per-tenant is idiomatic rather than a convention the app enforces.
+
+**What would change the answer:** hybrid keyword search dominating quality → OpenSearch. The
+sovereignty requirement dropped → Pinecone, cheaper to operate. Millions of vectors per tenant →
+collection-per-tenant stops scaling; move to single-collection with payload partitioning.
 
 ### Why embeddings run on CPU
 

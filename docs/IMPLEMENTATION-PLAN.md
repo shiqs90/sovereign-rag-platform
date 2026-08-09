@@ -328,6 +328,38 @@ interrupts — that is what LangGraph actually buys. A capped 4-iteration retrie
 none of it. Adopting it for the CV keyword alone weakens the isolation argument, which is the
 whole project.
 
+### Streamlit demo frontend
+
+The v1 demo is `curl` + `scripts/verify-isolation.sh`. That is the right artifact for an
+interview — a UI proves nothing about isolation, the eval suite does. But the money shot
+(two tenants, same question, different answers, different citations) reads in five seconds
+side-by-side in a browser and requires reading JSON blobs in a terminal.
+
+| Option | Cost | When |
+|---|---|---|
+| Split-terminal `curl` | 0 | v1 — ships with the project |
+| Static `index.html`, two panes, run locally | ~1 hr, **no pod, no memory** | if a video is being recorded |
+| **Streamlit pod** | ~2 hrs + ~400 MiB + Deployment/Service/Ingress | future enhancement only |
+
+Streamlit is deferred, not rejected: the `apps` pool sits at ~6.5–7 GiB of ~12.6 GiB
+allocatable, so another 400 MiB pod fits — but it buys presentation, not proof, and it
+becomes one more surface inside the trust boundary that has to be reasoned about. **Build it
+only after Block F passes.** If the timebox slips, this is the first thing cut.
+
+**Two prerequisites either browser option needs** (`curl` needs neither, which is why they
+are easy to forget until the demo is being recorded):
+
+1. **CORS** — a browser page on `localhost` or its own host calling `rag-a.<ip>.nip.io`
+   is cross-origin. FastAPI needs `CORSMiddleware` with the two tenant hosts allow-listed
+   and `Authorization` in `allow_headers`, or every `fetch()` fails at the preflight.
+   Allow-list the specific origins; `allow_origins=["*"]` in a project about isolation is a
+   bad look in a screen capture.
+2. **Self-signed cert** — the CA is self-signed, so the browser blocks the request until the
+   cert is trusted. **Visit `https://rag-a.<ip>.nip.io/healthz` AND `https://rag-b.<ip>.nip.io/healthz`
+   directly and accept the warning on each host before opening the demo page.** Both hosts,
+   separately — accepting one does not cover the other. Do this before hitting record; the
+   failure looks like a generic network error in the console, not a cert error.
+
 ---
 
 ## Known weakness — name it, don't hide it
