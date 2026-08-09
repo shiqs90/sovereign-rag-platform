@@ -1,0 +1,13 @@
+.DS_Store
+CLAUDE.md
+*.pdf
+
+# Terraform — provider binaries (200MB+), local state, and anything with secrets.
+# .terraform.lock.hcl is deliberately NOT ignored: it pins provider versions.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
