@@ -289,7 +289,7 @@ empirical justification for the refusal threshold.
 
 | Cut | Why |
 |---|---|
-| GitHub Actions CI gate | Needs a warm GPU or a fixture harness. The `Generator` protocol leaves the door open; build it later. |
+| GitHub Actions CI gate | Needs a warm GPU or a fixture harness. The `Generator` protocol leaves the door open — see *Future enhancements → CI gate* for the CPU-only scoping. |
 | Langfuse v3 | ~8 GiB RAM for a demo's worth of spans. |
 | Let's Encrypt / real domain | 3-hour DNS+ACME rabbit hole. Self-signed CA proves the same Issuer/Certificate/Secret understanding. |
 | Prometheus / Grafana | +1.5 GiB and +2h for system metrics that don't test the isolation boundary. vLLM's `/metrics` is scrapeable whenever it's wanted. |
@@ -302,6 +302,84 @@ decision log.
 ---
 
 ## Future enhancements
+
+*Priority order: the CI gate is proof, retrieval quality is evidence-gated, the last two are
+presentation and preference.*
+
+### CI gate — the CPU-only subset (highest value of the four)
+
+Cut from v1 because the eval calls vLLM, vLLM needs the T4, and a GPU spun up per push either
+burns the budget or costs ~10 min per run waiting on the node pool and model load.
+
+**But the thesis metrics don't need a GPU.** Splitting the eval by what it actually exercises:
+
+| Metric | Needs GPU? | Why |
+|---|---|---|
+| **Tenant leakage rate = 0** | **No** | a property of the retriever + payload filter, not the LLM |
+| Retrieval recall@5 | **No** | embeddings come from TEI, already CPU-only |
+| Citation validity | **No** | schema check: every citation marker traces to a retrieved chunk |
+| Refusal / false-refusal rate | Yes | requires real generation |
+| p95 latency | Yes | and is reported, not gated, anyway |
+
+So a GitHub Actions job on free CPU runners — Qdrant + TEI as service containers, ingest a
+small fixture corpus, run the eval with `FixtureGenerator`, assert **leakage = 0** — gates the
+single most important claim in the project. No Azure spend, ~2 min, no GPU.
+
+The `Generator` protocol (Block D, line ~182) exists precisely to make this possible; it was
+built in from the first commit for exactly this reason.
+
+**Scope deliberately:** gate only the three CPU-side metrics. Generation-dependent metrics stay
+in the manual, GPU-warm eval run. A green CI badge that silently skips half the suite is worse
+than no badge.
+
+Maps to the JD's *"model registries and CI/CD for reproducible deployments"* — and gating a
+data-isolation invariant in CI is a stronger story than gating a unit test.
+
+### Retrieval quality — measure before fixing
+
+v1 is **dense-only**, `k=5`, tenant-filtered. That is deliberate, and nothing below gets built
+until an eval run says it is needed.
+
+**The known weak spot.** Dense embeddings encode meaning, not identity: `"Article 9"` and
+`"Article 19"` are near-identical strings and land at near-identical points in vector space. A
+question naming a specific article can therefore retrieve the wrong one. Note this fails
+*honestly* here — the marker→metadata mapping means the answer cites "Art. 19" correctly while
+being about the wrong article, so it is visible in the trace rather than unfalsifiable.
+
+**Three seams to build in v1** — minutes now, a full re-index later. None change v1 behaviour:
+
+1. **Embed the identifier with the body** — `"Article 9 — Breach notification: <body>"`, not the
+   body alone. A string concat in the ingest loop; retrofitting means re-embedding everything.
+2. **Store sparse vectors at ingest** if bge-m3 emits them in the same call. Makes hybrid a
+   query-side change forever, instead of a re-index.
+3. **Payload-index `article`** — already needed for citations; it is also the precondition for
+   the filter fix below.
+
+Same instinct as the `Generator` protocol: build the seam early, use it when justified.
+
+**Add 2–3 article-number questions to `eval/questions.yaml`.** A gate that never probes the
+suspected weak spot is not a gate. If the weakness is real the eval names it; if not, the work
+below is saved.
+
+**Then read the failures — diagnosis drives the fix:**
+
+| What the eval shows | Fix |
+|---|---|
+| Failures cluster on explicit article references | **Regex the article number → Qdrant payload filter** (`article == 9`). ~20 lines, no new infra. Deterministic: returning Art. 19 becomes *impossible*, not merely unlikely. |
+| Failures scattered across rare terms, exact phrases, names | **Hybrid** (sparse + dense, RRF fusion) using the vectors seam #2 already stored |
+| Right chunk retrieved, wrong answer written | Prompt work — not a retrieval problem at all |
+| Recall fine, precision poor (gold chunk at rank 4–5) | **Reranker** (`bge-reranker-v2-m3`), if the ~1 GiB fits the apps budget |
+
+**Filter over hybrid, when both apply.** A filter is a *guarantee*; hybrid improves *odds*. On a
+platform whose selling point is provable behaviour, prefer the guarantee. The general principle:
+if the query contains a structured identifier, extract it and filter on it — use embeddings only
+for the unstructured remainder. Semantic similarity is the wrong tool for something the user
+stated exactly.
+
+**What not to do:** add the filter *and* hybrid *and* a reranker because each is individually
+defensible. Every addition is a pod, a tuning knob, or a failure surface, and three overlapping
+retrieval mechanisms turn "why did this chunk win?" into a research question — on a system whose
+entire value is answering exactly that.
 
 ### LangGraph for the agent loop
 
