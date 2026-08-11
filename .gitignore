@@ -1,6 +1,10 @@
 .DS_Store
 CLAUDE.md
-*.pdf
+
+# Python — uv.lock IS committed (it pins exact versions; that is the point)
+.venv/
+__pycache__/
+*.pyc
 
 # Terraform — provider binaries (200MB+), local state, and anything with secrets.
 # .terraform.lock.hcl is deliberately NOT ignored: it pins provider versions.

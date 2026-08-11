@@ -1,0 +1,14 @@
+[project]
+name = "sovereign-rag-platform"
+version = "0.1.0"
+description = "Multi-tenant RAG platform — local tooling (corpus extraction, evaluation)"
+requires-python = ">=3.11"
+
+# Local tooling only. The rag-service container gets its own dependency set so the
+# image never carries PDF parsers it will not use at serving time.
+dependencies = [
+    "pymupdf>=1.24",
+]
+
+[tool.uv]
+package = false

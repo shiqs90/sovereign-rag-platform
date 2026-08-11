@@ -123,13 +123,45 @@ shows `nvidia.com/gpu: 1`.
 
 ### Block B — corpus (runs parallel to A, ~1:00)
 
-Convert both laws **once, offline** to `corpus/uae-pdpl.md` and `corpus/difc-dp-2020.md` with
-`## Article N — Title` headers. Commit the markdown. Ingest reads markdown, never PDF.
+**Two stages, and the split is the point.** Extraction is slow and non-deterministic — a parser
+upgrade silently changes what lands in the index — so its output is cached and becomes the
+ingest contract. Chunking and embedding read the cached artifact, so re-chunking or swapping
+the embedding model never re-parses a PDF. This is the standard production shape (Unstructured,
+Docling, Document Intelligence all persist their output for the same reason), not a shortcut.
 
-Chunking: **one chunk = one Article.** Metadata `{tenant_id, law, article_number, source_url}`.
-Expect ~50–80 chunks (PDPL), ~120–180 (DIFC).
+```
+corpus/
+  raw/         uae-pdpl.pdf, difc-dp-2020.pdf     ← source documents, committed
+  extract.py                                       ← stage 1: PDF → structured markdown
+  processed/   uae-pdpl.md, difc-dp-2020.md        ← generated, committed for reproducibility
+```
 
-*Cutoff:* if official English texts fight back for >30 min, switch to GDPR + EU AI Act and move on.
+**Stage 1 — `extract.py`.** A PDF has no semantic structure: it stores positioned glyphs, and
+*Law → Chapter → Article* is something humans infer from font size. Recovering `article_number`
+is therefore the whole job, because three things depend on it: chunk boundaries (one chunk = one
+Article), citations (marker → `PDPL Art. 9`), and the article-number payload filter. Without
+structure you fall back to fixed-size chunking and the citation design becomes impossible.
+
+Validation is part of the stage, not an afterthought: **report article count and gaps in the
+numbering**. Articles 1–8 and 10–20 extracted means Article 9 silently failed — a gap check
+catches it, a spot-check does not.
+
+**Stage 2 — ingest** reads `processed/*.md`, never PDF. Metadata
+`{tenant_id, law, article_number, source_url}`. Expect ~50–80 chunks (PDPL), ~120–180 (DIFC).
+
+**Before committing to a PDF, check it has a text layer** — a scanned image needs OCR, which is
+the rabbit hole this block's cutoff exists to avoid:
+
+```bash
+python3 -c "import fitz; d=fitz.open('corpus/raw/uae-pdpl.pdf'); print(repr(d[3].get_text()[:400]))"
+```
+
+*Cutoff (45 min):* if heading detection fights one law, hand-fix that markdown and record it in
+the README as a known limitation — real extraction pipelines have per-document exceptions, and
+saying so is more credible than pretending a regex handled everything. If official English texts
+fight back entirely, switch to GDPR + EU AI Act and move on. The thesis is isolation, not UAE law.
+
+*Onboarding answer this buys:* "drop the PDF in `raw/`, run extract, run ingest."
 
 ### Block C — data plane (2:00–4:00)
 

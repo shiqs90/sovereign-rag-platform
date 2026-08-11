@@ -1,0 +1,87 @@
+# Evaluation set — deliberately small and deliberately asymmetric.
+#
+#   leakage_rate           GATE.     Exactly 0, no error budget. This is the platform claim:
+#                                    every retrieved chunk belongs to the calling tenant.
+#   gold_article_hit_rate  REPORTED. Sanity only — does retrieval find the right article at
+#                                    all. Not gated. Answer quality is an AI-engineering
+#                                    concern; the bar here is "demonstrably works", not
+#                                    "correct every time".
+#
+# Why so few questions: the two laws name their regulator differently — PDPL says "Bureau",
+# DIFC says "Commissioner" — so a leak is detectable by a plain string check. That gives a
+# cheap, unambiguous signal and removes the need for volume to catch crossing.
+#
+# Derivation rules (so no question here is arbitrary):
+#   1. paired   — same question to both tenants, both laws genuinely cover the topic
+#   2. trap     — a question using the OTHER law's vocabulary; correct behaviour is to
+#                 retrieve nothing relevant from one's own corpus, never the other's
+#   3. every item records gold_article, so retrieval is checkable
+#   4. forbidden_terms are terms that can only come from the other tenant's corpus
+
+questions:
+  # --- paired: breach notification obligations -------------------------------
+  - id: breach-obligations-a
+    type: paired
+    tenant: tenant-a
+    question: "What are my breach notification obligations?"
+    gold_article: 9
+    forbidden_terms: ["Commissioner", "DIFC"]
+
+  - id: breach-obligations-b
+    type: paired
+    tenant: tenant-b
+    question: "What are my breach notification obligations?"
+    gold_article: 41
+    forbidden_terms: ["Bureau", "Executive Regulations"]
+
+  # --- paired: who is the regulator ------------------------------------------
+  # The sharpest contrast in the corpus. PDPL Art. 9 -> the Bureau.
+  # DIFC Art. 41 -> the Commissioner.
+  - id: who-to-notify-a
+    type: paired
+    tenant: tenant-a
+    question: "Who must I notify when personal data is breached?"
+    gold_article: 9
+    forbidden_terms: ["Commissioner", "DIFC"]
+
+  - id: who-to-notify-b
+    type: paired
+    tenant: tenant-b
+    question: "Who must I notify when personal data is breached?"
+    gold_article: 41
+    forbidden_terms: ["Bureau", "Executive Regulations"]
+
+  # --- paired: notifying the data subject ------------------------------------
+  # Structural difference worth surfacing: PDPL folds this into Art. 9, DIFC gives it
+  # its own Article 42. Same question, different shape of answer.
+  - id: notify-data-subject-a
+    type: paired
+    tenant: tenant-a
+    question: "Do I have to tell the affected individual about a data breach?"
+    gold_article: 9
+    forbidden_terms: ["Commissioner", "DIFC"]
+
+  - id: notify-data-subject-b
+    type: paired
+    tenant: tenant-b
+    question: "Do I have to tell the affected individual about a data breach?"
+    gold_article: 42
+    forbidden_terms: ["Bureau", "Executive Regulations"]
+
+  # --- traps: the other law's vocabulary -------------------------------------
+  # A trap only catches a leak if the wrong answer looks plausible. "Commissioner" exists
+  # only in DIFC; "Executive Regulations" only in PDPL. If tenant-a's retrieval returns
+  # DIFC chunks here, the boundary failed.
+  - id: trap-commissioner-asked-by-a
+    type: trap
+    tenant: tenant-a
+    question: "What must I report to the Commissioner about a personal data breach?"
+    gold_article: null          # no correct answer exists in tenant-a's corpus
+    forbidden_terms: ["DIFC", "Commissioner"]
+
+  - id: trap-executive-regs-asked-by-b
+    type: trap
+    tenant: tenant-b
+    question: "What do the Executive Regulations require when reporting to the Bureau?"
+    gold_article: null          # no correct answer exists in tenant-b's corpus
+    forbidden_terms: ["Bureau", "Executive Regulations"]
