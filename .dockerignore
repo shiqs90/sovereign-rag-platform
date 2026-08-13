@@ -1,0 +1,12 @@
+corpus/
+eval/
+scripts/
+terraform/
+docs/
+k8s/
+.venv/
+.git/
+*.md
+uv.lock
+pyproject.toml
+**/__pycache__/

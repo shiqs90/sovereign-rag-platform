@@ -1,0 +1,186 @@
+# The network half of the isolation claim.
+#
+# These are enforced ONLY because the cluster was created with network_policy = "calico"
+# (terraform/aks.tf). Without an engine the API server accepts every object below and
+# enforces none of them — `kubectl get netpol` looks correct while nothing is isolated.
+# The engine cannot be added to a live cluster.
+#
+# Namespaces are matched on kubernetes.io/metadata.name, a label the API server sets
+# automatically and cannot drift from the actual namespace name.
+
+# ---------------------------------------------------------------- tenant-a
+# Default deny, both directions. An empty podSelector selects every pod in the namespace;
+# naming both policyTypes with no rules denies everything. Every allowance below is
+# additive — NetworkPolicies union, they never subtract.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# DNS. THE classic mistake: apply default-deny egress, forget port 53, then spend an hour
+# debugging "Qdrant is down" when the pod cannot resolve the name at all.
+# Both UDP and TCP — resolvers fall back to TCP for large responses.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# The only egress a tenant pod gets: the three platform services. No internet, and — the
+# point of the exercise — no route to the other tenant's namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-platform
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rag-platform
+      ports:
+        - protocol: TCP
+          port: 6333 # qdrant
+        - protocol: TCP
+          port: 80 # tei
+        - protocol: TCP
+          port: 8000 # vllm
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-nginx
+  namespace: tenant-a
+spec:
+  podSelector:
+    matchLabels:
+      app: rag
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# ---------------------------------------------------------------- tenant-b
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-platform
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rag-platform
+      ports:
+        - protocol: TCP
+          port: 6333
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-nginx
+  namespace: tenant-b
+spec:
+  podSelector:
+    matchLabels:
+      app: rag
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# ---------------------------------------------------------------- rag-platform
+---
+# Ingress-only restriction. Platform services accept traffic from tenant namespaces and
+# nothing else — no path in from outside the cluster.
+#
+# Egress is deliberately NOT restricted here: TEI and vLLM download their weights from
+# huggingface.co on first start. Locking egress down would require an allowlist of Hugging
+# Face and CDN addresses that change without notice. The production answer is to bake
+# weights into the image or serve them from Blob Storage, which removes the internet
+# dependency entirely and lets this become default-deny too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-tenants
+  namespace: rag-platform
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tenant: "true"

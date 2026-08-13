@@ -1,0 +1,73 @@
+# Qdrant — one instance, one collection per tenant.
+#
+# StatefulSet rather than Deployment because the vectors are state: a StatefulSet gives a
+# stable pod identity and a PVC that survives pod restarts. A Deployment with a PVC would
+# also work for a single replica, but would silently break the moment replicas > 1 (two
+# pods, one ReadWriteOnce disk, one stuck Pending).
+#
+# The tenant boundary is NOT enforced here — see README "Known limitation". Qdrant OSS has
+# a single instance-wide API key, so isolation rests on the application and NetworkPolicy.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: rag-platform
+spec:
+  type: ClusterIP # never exposed outside the cluster
+  selector:
+    app: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: rag-platform
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      nodeSelector:
+        pool: apps
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          ports:
+            - containerPort: 6333
+          volumeMounts:
+            - name: storage
+              mountPath: /qdrant/storage
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+            limits:
+              memory: 2Gi
+              cpu: "1"
+  # volumeClaimTemplates PVCs are NOT deleted by `kubectl delete statefulset`.
+  # Only `terraform destroy` of the resource group reclaims the underlying disk.
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 8Gi

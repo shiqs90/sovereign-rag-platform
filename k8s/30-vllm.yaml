@@ -1,0 +1,88 @@
+# vLLM — the only pod on the GPU node.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: rag-platform
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: rag-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      # LOAD-BEARING. Kubernetes injects env vars for every Service in the namespace, so a
+      # Service named `vllm` produces VLLM_PORT=tcp://10.0.x.x:8000. vLLM reads VLLM_PORT
+      # as its own listen port, fails to parse "tcp://...", and crashes on startup.
+      enableServiceLinks: false
+      nodeSelector:
+        workload: gpu
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: present
+          effect: NoSchedule
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.22.1
+          args:
+            - --model=Qwen/Qwen2.5-7B-Instruct-AWQ
+            # awq, NOT awq_marlin — Marlin kernels require SM 8.0+; the T4 is SM 7.5.
+            - --quantization=awq
+            # Turing has no bf16. Omitting this lets vLLM pick bfloat16 and abort.
+            - --dtype=float16
+            # CUDA graph capture costs ~1-2 GiB of VRAM we would rather spend on KV cache.
+            - --enforce-eager
+            - --gpu-memory-utilization=0.90
+            - --max-model-len=8192
+            - --max-num-seqs=8
+            # Emit OpenAI-format tool_calls objects instead of raw text. Required by the
+            # agentic loop; harmless before it exists.
+            - --enable-auto-tool-choice
+            - --tool-call-parser=hermes
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_HOME
+              value: /cache
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+          # ~5.6 GB download plus weight load. 60 x 10s = 10 minutes before the kubelet
+          # gives up. On a cold node this genuinely takes 5-8 minutes.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+          resources:
+            limits:
+              # Requesting the GPU is what makes the device plugin bind it. Without this
+              # the pod schedules onto the node and sees no GPU at all.
+              nvidia.com/gpu: 1
+      volumes:
+        - name: cache
+          emptyDir: {}

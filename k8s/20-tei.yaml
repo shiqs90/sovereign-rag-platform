@@ -1,0 +1,115 @@
+# Text Embeddings Inference — BAAI/bge-m3 on CPU.
+#
+# On CPU deliberately, not because it wouldn't fit on the T4. Two pods cannot both claim
+# `nvidia.com/gpu: 1`; sharing requires time-slicing, which gives scheduling isolation with
+# ZERO memory isolation — one OOM would take inference and embedding down together, for
+# both tenants. Embedding is a one-time batch cost at ingest, not on the serving hot path,
+# so CPU is the correct placement. Full reasoning in docs/instance_math.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei
+  namespace: rag-platform
+spec:
+  type: ClusterIP
+  selector:
+    app: tei
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tei
+  namespace: rag-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tei
+  template:
+    metadata:
+      labels:
+        app: tei
+    spec:
+      nodeSelector:
+        pool: apps
+      containers:
+        - name: tei
+          # cpu-1.5 pins hf-hub 0.3.2, which resolves the hub endpoint to an empty string
+          # and fails every download with "relative URL without a base" — a URL parse
+          # error that looks like a network problem and is not one.
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+          args:
+            - --model-id=BAAI/bge-m3
+            - --port=8080
+            # Legal articles vary wildly in length. Without this, anything over the model's
+            # 8192-token window returns a 413 and the whole ingest run dies partway through.
+            - --auto-truncate
+            # Attention memory is QUADRATIC in sequence length, and ONNX Runtime
+            # materialises the full matrix (no flash-attention on this CPU path):
+            #   8192^2 x 16 heads x 4 bytes ~= 4.3 GB   -> OOMKilled at both 5Gi and 8Gi
+            #   2048^2 x 16 heads x 4 bytes ~= 268 MB   -> fits comfortably
+            # With --auto-truncate this caps inputs at 2048 tokens (~8k characters).
+            # Measured against the actual corpus: median article is ~1,200 chars (~350
+            # tokens) and exactly 1 of 96 articles exceeds the cap. The 8192 window was
+            # never being used — it only ever cost memory.
+            # This is a floor set by the LONGEST SINGLE INPUT, not a throughput knob.
+            # TEI cannot batch an input larger than this ceiling, and it does not reject
+            # it — it HANGS, waiting for a slot that can never exist, until the client
+            # times out. Reproduced: one 2,900-token input against a 2,048 ceiling blocked
+            # until the read timeout fired. --auto-truncate does NOT help; it truncates to
+            # the model's limit (8192), not to the batch budget.
+            #
+            # DIFC's longest article is 11,473 chars. 6144 covers it even at an
+            # implausible 1.9 chars/token, and costs 6144^2 x 16 x 4 ~= 2.4 GB of
+            # attention on top of ~2.3 GB of weights — inside the 8Gi limit.
+            - --max-batch-tokens=6144
+          ports:
+            - containerPort: 8080
+          env:
+            # TEI downloads the model on first start (~2.3 GB) and needs a writable cache.
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /data
+            # Set explicitly. Left unset, this TEI build resolves the hub endpoint to an
+            # empty string and every download fails with "relative URL without a base" —
+            # it is a URL parse error, not a network error, so it looks like DNS or egress
+            # when it is neither.
+            - name: HF_ENDPOINT
+              value: https://huggingface.co
+          volumeMounts:
+            - name: cache
+              mountPath: /data
+          # Model download + load takes minutes. A readinessProbe alone would let the
+          # Deployment report Available before it can serve; startupProbe holds the gate
+          # and buys 10 minutes (60 x 10s) before the kubelet starts killing it.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 4Gi
+              cpu: "1"
+            # bge-m3 is ~2.2 GB of ONNX weights, and warmup allocates on top of that.
+            # 5Gi OOMKilled during "Warming up model". The apps node has ~12.6 GiB
+            # allocatable, so 8Gi fits alongside Qdrant and the two rag pods.
+            limits:
+              memory: 8Gi
+              # 3 of the node's ~3.86 allocatable vCPU. Qdrant and the two rag pods are
+              # nearly idle during ingest, and embedding throughput is CPU-bound.
+              cpu: "3"
+      volumes:
+        # emptyDir: the model is re-downloaded on reschedule. Acceptable for a short-lived
+        # platform; a PVC would be the production choice to survive restarts.
+        - name: cache
+          emptyDir: {}

@@ -7,7 +7,12 @@ requires-python = ">=3.11"
 # Local tooling only. The rag-service container gets its own dependency set so the
 # image never carries PDF parsers it will not use at serving time.
 dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "pymupdf>=1.24",
+    "pyyaml>=6.0.3",
+    "qdrant-client>=1.19.0",
+    "uvicorn>=0.52.1",
 ]
 
 [tool.uv]

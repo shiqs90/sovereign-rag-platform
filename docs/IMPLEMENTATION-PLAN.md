@@ -335,10 +335,10 @@ decision log.
 
 ## Future enhancements
 
-*Priority order: the CI gate is proof, retrieval quality is evidence-gated, the last two are
-presentation and preference.*
+*Priority order: the CI gate is proof; RAGAS/Datasets and retrieval quality are evidence-gated;
+the last two are presentation and preference.*
 
-### CI gate — the CPU-only subset (highest value of the four)
+### CI gate — the CPU-only subset (highest value of the five)
 
 Cut from v1 because the eval calls vLLM, vLLM needs the T4, and a GPU spun up per push either
 burns the budget or costs ~10 min per run waiting on the node pool and model load.
@@ -366,6 +366,36 @@ than no badge.
 
 Maps to the JD's *"model registries and CI/CD for reproducible deployments"* — and gating a
 data-isolation invariant in CI is a stronger story than gating a unit test.
+
+### RAGAS / Langfuse Datasets for answer-quality evaluation
+
+v1 evaluates **8 questions, deterministically, with two metrics**: `leakage_rate` (gated at 0)
+and `gold_article_hit_rate` (reported, not gated). That split is the point — *isolation is the
+platform's claim; answer quality is an AI-engineering concern.* The bar for v1 is "demonstrably
+does what it says", not "correct every time".
+
+**Why no RAGAS in v1.** RAGAS is the de-facto RAG eval framework, and its headline metrics —
+faithfulness, answer relevancy, context precision/recall — are **LLM-judged**. That means GPU
+calls and non-deterministic scores. For a *security invariant* that is disqualifying: "leakage =
+0" cannot be assessed by a judge that might phrase its verdict differently on a re-run. It also
+breaks the CPU-only CI gate. RAGAS is the right tool for the question v1 deliberately does not
+ask.
+
+**Why YAML, not Langfuse Datasets, as source of truth.** Langfuse is Block G — the last block,
+60-minute timebox, with a documented JSONL fallback. Making it the source of truth would mean
+the eval cannot run until Langfuse is up, and cannot run in CI at all. YAML runs anywhere.
+
+**Adopt when** answer quality becomes a goal in its own right:
+
+| Tool | Adds | Cost |
+|---|---|---|
+| **Langfuse Datasets** | Versioned eval items, experiment runs linked to traces, a UI for comparing runs. Already in the stack | Sync from YAML in Block G; keep YAML authoritative so CI stays independent |
+| **RAGAS** | Faithfulness, answer relevancy, context precision/recall | LLM judge → GPU, non-determinism, cost per run. Run it *alongside* the deterministic gate, never in place of it |
+| **promptfoo** | YAML-declared evals, CI-friendly | Overlaps what already exists; adopt only if the eval config outgrows a single file |
+
+**The rule to keep:** the isolation gate stays deterministic and CI-runnable forever. Quality
+metrics may be LLM-judged, run separately, and reported rather than gated. Never let a
+probabilistic judge sit in front of a security invariant.
 
 ### Retrieval quality — measure before fixing
 

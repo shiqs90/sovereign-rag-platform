@@ -1,6 +1,9 @@
 .DS_Store
 CLAUDE.md
 
+# Personal build notes — carries JD/interview framing that the committed docs deliberately don't
+P10-SUMMARY.md
+
 # Python — uv.lock IS committed (it pins exact versions; that is the point)
 .venv/
 __pycache__/
@@ -15,3 +18,7 @@ __pycache__/
 *.tfvars.json
 crash.log
 crash.*.log
+
+# uv-files
+uv.lock
+docs/

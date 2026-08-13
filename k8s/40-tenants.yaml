@@ -1,0 +1,227 @@
+# One rag-service per tenant, each in its own namespace with its own identity.
+#
+# The control-plane half of the isolation claim lives here. Note what each pod is given:
+# API_KEYS contains ONLY that tenant's key. tenant-a's pod cannot authenticate key-b even
+# if someone presents it — auth() would return None and reject with 401. The boundary does
+# not depend on the filter alone.
+#
+# Substitute the registry before applying:
+#   ACR=$(terraform -chdir=terraform output -raw acr_login_server)
+#   sed -i '' "s|sovereignragva8lut.azurecr.io|$ACR|g" k8s/40-tenants.yaml
+
+# ---------------------------------------------------------------- tenant-a
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rag-sa
+  namespace: tenant-a
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-api-keys
+  namespace: tenant-a
+type: Opaque
+stringData:
+  # Kubernetes Secrets are base64-encoded, NOT encrypted. Anyone with `get secrets` on this
+  # namespace reads them in plaintext — which is exactly why the Role below is narrow.
+  # Production step up: etcd encryption at rest, then Azure Key Vault via the CSI driver
+  # with Workload Identity, so no static credential exists in the cluster at all.
+  API_KEYS: '{"key-a": "tenant-a"}'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-own-secret
+  namespace: tenant-a
+rules:
+  # get only — no list, no watch. `list` would return every Secret in the namespace and
+  # quietly defeat the resourceNames restriction, which list/watch cannot enforce.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["rag-api-keys"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-own-secret
+  namespace: tenant-a
+subjects:
+  - kind: ServiceAccount
+    name: rag-sa
+    namespace: tenant-a
+roleRef:
+  kind: Role
+  name: rag-own-secret
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag
+  namespace: tenant-a
+spec:
+  type: ClusterIP
+  selector:
+    app: rag
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag
+  namespace: tenant-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag
+  template:
+    metadata:
+      labels:
+        app: rag
+    spec:
+      serviceAccountName: rag-sa
+      nodeSelector:
+        pool: apps
+      containers:
+        - name: rag
+          image: sovereignragva8lut.azurecr.io/rag-service:v3
+          ports:
+            - containerPort: 8080
+          env:
+            # Cross-namespace DNS: <service>.<namespace>. The platform services live in
+            # rag-platform, so the short name `qdrant` would not resolve from here.
+            - name: QDRANT_URL
+              value: http://qdrant.rag-platform:6333
+            # Setting these is what swaps HashEmbedder/FixtureGenerator for the real
+            # models — see app/main.py:46-53. No code change, no rebuild.
+            - name: TEI_URL
+              value: http://tei.rag-platform
+            - name: VLLM_URL
+              value: http://vllm.rag-platform:8000
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: rag-api-keys
+                  key: API_KEYS
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+
+# ---------------------------------------------------------------- tenant-b
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rag-sa
+  namespace: tenant-b
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-api-keys
+  namespace: tenant-b
+type: Opaque
+stringData:
+  API_KEYS: '{"key-b": "tenant-b"}'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-own-secret
+  namespace: tenant-b
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["rag-api-keys"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-own-secret
+  namespace: tenant-b
+subjects:
+  - kind: ServiceAccount
+    name: rag-sa
+    namespace: tenant-b
+roleRef:
+  kind: Role
+  name: rag-own-secret
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag
+  namespace: tenant-b
+spec:
+  type: ClusterIP
+  selector:
+    app: rag
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag
+  namespace: tenant-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag
+  template:
+    metadata:
+      labels:
+        app: rag
+    spec:
+      serviceAccountName: rag-sa
+      nodeSelector:
+        pool: apps
+      containers:
+        - name: rag
+          image: sovereignragva8lut.azurecr.io/rag-service:v3
+          ports:
+            - containerPort: 8080
+          env:
+            - name: QDRANT_URL
+              value: http://qdrant.rag-platform:6333
+            - name: TEI_URL
+              value: http://tei.rag-platform
+            - name: VLLM_URL
+              value: http://vllm.rag-platform:8000
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: rag-api-keys
+                  key: API_KEYS
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m

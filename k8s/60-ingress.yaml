@@ -1,0 +1,99 @@
+# TLS + external routing.
+#
+# A self-signed CA rather than Let's Encrypt: ACME needs a real domain you control and a
+# public DNS record, which is a multi-hour detour that teaches nothing extra. The chain
+# below exercises the same cert-manager objects — Issuer, Certificate, and the Secret it
+# writes — that a production ACME setup uses. Only the trust anchor differs.
+#
+# Hostnames use nip.io, which resolves any *.<ip>.nip.io to <ip>. No DNS ownership needed.
+#
+# Substitute the load balancer IP before applying:
+#   LB=$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
+#          -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+#   sed -i '' "s|__LB_IP__|$LB|g" k8s/60-ingress.yaml
+
+# 1. A ClusterIssuer that signs with nothing but itself. Used once, to mint the CA.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
+---
+# 2. The CA certificate itself. isCA: true is what makes it able to sign other certs.
+#    The private key lands in Secret sovereign-rag-ca in the cert-manager namespace.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sovereign-rag-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: sovereign-rag-ca
+  secretName: sovereign-rag-ca
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+  duration: 8760h # 1 year
+---
+# 3. A second ClusterIssuer that signs using the CA above. This is what tenant
+#    Certificates reference. Two issuers is not ceremony — a self-signed issuer cannot
+#    sign for another name, so the CA hop is what makes per-host certs possible.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: sovereign-rag-ca
+spec:
+  ca:
+    secretName: sovereign-rag-ca
+---
+# 4. Per-tenant Ingress. cert-manager watches the annotation, sees the tls block, mints a
+#    Certificate and writes the key pair into the named Secret — in the SAME namespace as
+#    the Ingress, which is why each tenant gets its own.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag
+  namespace: tenant-a
+  annotations:
+    cert-manager.io/cluster-issuer: sovereign-rag-ca
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["rag-a.__LB_IP__.nip.io"]
+      secretName: rag-a-tls
+  rules:
+    - host: rag-a.__LB_IP__.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rag
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag
+  namespace: tenant-b
+  annotations:
+    cert-manager.io/cluster-issuer: sovereign-rag-ca
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["rag-b.__LB_IP__.nip.io"]
+      secretName: rag-b-tls
+  rules:
+    - host: rag-b.__LB_IP__.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rag
+                port:
+                  number: 8080

@@ -1,0 +1,25 @@
+# Namespaces carry labels because NetworkPolicy selects namespaces by label, never by name.
+# Without these labels every namespaceSelector in 50-networkpolicies.yaml matches nothing —
+# and a policy that matches nothing fails closed, so pods lose all egress and hang on DNS.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rag-platform
+  labels:
+    name: rag-platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    name: tenant-a
+    tenant: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    name: tenant-b
+    tenant: "true"

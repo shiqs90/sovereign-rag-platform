@@ -207,6 +207,10 @@ scripts/       verify.sh, ingest.sh, verify-isolation.sh
 docs/          IMPLEMENTATION-PLAN.md, instance_math.md
 ```
 
+- [`docs/STATUS.md`](docs/STATUS.md) — what is built, what is not, the next command, and the
+  decisions already settled. **Read this first when resuming.**
+- [`docs/ENHANCEMENTS.md`](docs/ENHANCEMENTS.md) — work deliberately not done, with the reason
+  and the production answer for each
 - [`docs/instance_math.md`](docs/instance_math.md) — node pool sizing, regional quota ceilings,
   GPU memory and KV cache budget, cost breakdown
 - [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — execution order and the
