@@ -61,13 +61,18 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rag-platform
+      # THESE ARE POD PORTS, NOT SERVICE PORTS. NetworkPolicy is evaluated after
+      # kube-proxy has already DNAT'd the Service VIP to a pod IP, so what matters is
+      # the containerPort. The TEI Service listens on 80 but targets 8080 — allowing
+      # 80 here matched nothing and every embed call hung until it timed out.
+      # Qdrant and vLLM only worked because their Service and pod ports are identical.
       ports:
         - protocol: TCP
-          port: 6333 # qdrant
+          port: 6333 # qdrant   svc 6333 -> pod 6333
         - protocol: TCP
-          port: 80 # tei
+          port: 8080 # tei      svc 80   -> pod 8080
         - protocol: TCP
-          port: 8000 # vllm
+          port: 8000 # vllm     svc 8000 -> pod 8000
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -134,13 +139,14 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rag-platform
+      # POD ports, not Service ports — see the tenant-a policy above for why.
       ports:
         - protocol: TCP
-          port: 6333
+          port: 6333 # qdrant   svc 6333 -> pod 6333
         - protocol: TCP
-          port: 80
+          port: 8080 # tei      svc 80   -> pod 8080
         - protocol: TCP
-          port: 8000
+          port: 8000 # vllm     svc 8000 -> pod 8000
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

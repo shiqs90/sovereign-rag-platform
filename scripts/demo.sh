@@ -97,8 +97,38 @@ echo -n "tenant-b pod: "; kubectl exec -n tenant-b deploy/rag -- printenv API_KE
 #    EXPECT: a timeout. Requires k8s/50-networkpolicies.yaml to be applied, and
 #            only enforced because the cluster was built with network_policy=calico.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== NETWORK ==="
+echo "=== NETWORK — cross-tenant blocked ==="
 kubectl exec -n tenant-a deploy/rag -- \
-  python -c 'import httpx
-try:    httpx.get("http://rag.tenant-b:8080/healthz", timeout=5); print("REACHED — LEAK")
-except Exception as e: print(type(e).__name__, "— blocked")'
+  python -c 'import urllib.request
+try:    print("HTTP", urllib.request.urlopen("http://rag.tenant-b:8080/healthz", timeout=5).status)
+except Exception as e: print(type(e).__name__)'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. The allowed paths still work.
+#    WHY: a default-deny that blocks everything is trivial. The result that matters
+#         is blocking cross-tenant traffic while the platform still functions.
+#    EXPECT: qdrant / tei / vllm all OK, then a real answer citing UAE PDPL Art.9.
+#    NOTE: NetworkPolicy ports are POD ports, not Service ports — the TEI Service is
+#          80 but its pod listens on 8080, so the egress rule must say 8080.
+# ─────────────────────────────────────────────────────────────────────────────
+echo "=== NETWORK — allowed paths still reachable ==="
+kubectl exec -n tenant-a deploy/rag -- python -c '
+import socket, time, urllib.request
+for name, url in [("qdrant","http://qdrant.rag-platform:6333/readyz"),
+                  ("tei","http://tei.rag-platform/health"),
+                  ("vllm","http://vllm.rag-platform:8000/health")]:
+    t=time.time()
+    try:
+        socket.gethostbyname(url.split("/")[2].split(":")[0])
+        urllib.request.urlopen(url, timeout=8)
+        print(f"{name:8} OK   {round(time.time()-t,1)}s")
+    except Exception as e:
+        print(f"{name:8} FAIL {type(e).__name__} {round(time.time()-t,1)}s")
+'
+
+echo "=== tenant-a still retrieves its own corpus ==="
+curl -s -X POST localhost:18080/query -H 'Authorization: Bearer key-a' \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What are my breach notification obligations?"}' \
+  | python3 -c 'import sys,json; print("citations:", json.load(sys.stdin)["citations"])'

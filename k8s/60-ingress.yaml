@@ -10,7 +10,7 @@
 # Substitute the load balancer IP before applying:
 #   LB=$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
 #          -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-#   sed -i '' "s|__LB_IP__|$LB|g" k8s/60-ingress.yaml
+#   sed -i '' "s|20.37.1.106|$LB|g" k8s/60-ingress.yaml
 
 # 1. A ClusterIssuer that signs with nothing but itself. Used once, to mint the CA.
 apiVersion: cert-manager.io/v1
@@ -60,10 +60,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["rag-a.__LB_IP__.nip.io"]
+    - hosts: ["rag-a.20.37.1.106.nip.io"]
       secretName: rag-a-tls
   rules:
-    - host: rag-a.__LB_IP__.nip.io
+    - host: rag-a.20.37.1.106.nip.io
       http:
         paths:
           - path: /
@@ -84,10 +84,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["rag-b.__LB_IP__.nip.io"]
+    - hosts: ["rag-b.20.37.1.106.nip.io"]
       secretName: rag-b-tls
   rules:
-    - host: rag-b.__LB_IP__.nip.io
+    - host: rag-b.20.37.1.106.nip.io
       http:
         paths:
           - path: /
