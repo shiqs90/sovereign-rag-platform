@@ -57,11 +57,13 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST localhost:18080/query \
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. The rejection is recorded.
 #    WHY: a control you cannot evidence afterwards is not a control.
-#    EXPECT: note="rejected X-Tenant=tenant-b", retrieved_article_ids=[] (refused
-#            before any search ran), and the question stored only as a sha256.
+#    EXPECT: the last row is the spoof — note="rejected X-Tenant=tenant-b",
+#            retrieved_article_ids=[] and latency_ms=0, i.e. refused BEFORE any
+#            search ran. The question is stored only as a sha256, never verbatim.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== AUDIT ==="
-curl -s localhost:18080/audit -H 'Authorization: Bearer key-a' | python3 -m json.tool | tail -20
+echo "=== AUDIT — last entry only (the spoof) ==="
+curl -s localhost:18080/audit -H 'Authorization: Bearer key-a' \
+  | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)[-1], indent=2))'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,10 +99,16 @@ echo -n "tenant-b pod: "; kubectl exec -n tenant-b deploy/rag -- printenv API_KE
 #    EXPECT: a timeout. Requires k8s/50-networkpolicies.yaml to be applied, and
 #            only enforced because the cluster was built with network_policy=calico.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== NETWORK — cross-tenant blocked ==="
+echo "=== NETWORK — cross-tenant blocked, both directions ==="
+echo -n "tenant-a -> tenant-b: "
 kubectl exec -n tenant-a deploy/rag -- \
   python -c 'import urllib.request
 try:    print("HTTP", urllib.request.urlopen("http://rag.tenant-b:8080/healthz", timeout=5).status)
+except Exception as e: print(type(e).__name__)'
+echo -n "tenant-b -> tenant-a: "
+kubectl exec -n tenant-b deploy/rag -- \
+  python -c 'import urllib.request
+try:    print("HTTP", urllib.request.urlopen("http://rag.tenant-a:8080/healthz", timeout=5).status)
 except Exception as e: print(type(e).__name__)'
 
 

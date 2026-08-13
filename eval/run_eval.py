@@ -41,9 +41,18 @@ def run(urls, questions):
         if foreign:
             leaks.append((item["id"], f"chunks from {sorted({c['tenant_id'] for c in foreign})}"))
 
-        # 2. the other law's vocabulary in the answer
+        # 2. the other law's vocabulary in the answer.
+        #
+        # Terms that appear in the QUESTION are skipped. A trap question deliberately uses
+        # the other law's vocabulary, so a correct refusal — "the passages do not cover what
+        # the Executive Regulations require" — quotes those terms back. Flagging that scores
+        # the ideal behaviour as a leak. Only vocabulary the model introduced ITSELF, which
+        # could only have come from the other corpus, is evidence.
         answer = (body.get("answer") or "")
+        question = item["question"].lower()
         for term in item.get("forbidden_terms", []):
+            if term.lower() in question:
+                continue
             if term.lower() in answer.lower():
                 leaks.append((item["id"], f"forbidden term in answer: {term!r}"))
 

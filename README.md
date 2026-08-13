@@ -203,7 +203,7 @@ k8s/           Namespaces, RBAC, Secrets, NetworkPolicies, Ingress, workloads
 app/           FastAPI RAG service — /ingest, /query, /healthz, /audit
 corpus/        Normalised legal texts (## Article N — Title)
 eval/          questions.yaml + run_eval.py
-scripts/       verify.sh, ingest.sh, verify-isolation.sh
+scripts/       verify.sh, ingest.sh, verify-eval-isolation.sh
 docs/          IMPLEMENTATION-PLAN.md, instance_math.md
 ```
 
@@ -246,7 +246,7 @@ kubectl get nodes -o wide            # gpu node Ready, containerd 1.7.x
 
 bash scripts/verify.sh               # vLLM, TEI, Qdrant reachable
 bash scripts/ingest.sh               # idempotent; populates both collections
-bash scripts/verify-isolation.sh     # the six isolation proofs
+bash scripts/verify-eval-isolation.sh     # the six isolation proofs
 python eval/run_eval.py              # leakage=0, recall>=0.90, citations=1.00
 ```
 

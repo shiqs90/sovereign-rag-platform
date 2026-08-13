@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The six isolation proofs. Run against a live cluster with everything deployed.
 #
-#   bash scripts/verify-isolation.sh
+#   bash scripts/verify-eval-isolation.sh
 #
 # Proofs 1-2 are control plane (RBAC), 3 is network (Calico), 4-6 are data plane.
 # Each layer is independent: any one of them failing should not let a leak through.

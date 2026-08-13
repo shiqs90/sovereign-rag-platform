@@ -274,7 +274,7 @@ without it, "multi-tenant" means nothing more than a WHERE clause.*
 
 ### Block F — proof + evaluation (9:30–11:00)
 
-`scripts/verify-isolation.sh`, mirroring the port-forward/trap/retry/assert structure of
+`scripts/verify-eval-isolation.sh`, mirroring the port-forward/trap/retry/assert structure of
 `vllm-serving-aks/scripts/verify.sh`:
 
 | # | Proof | Expected |
@@ -470,7 +470,7 @@ whole project.
 
 ### Streamlit demo frontend
 
-The v1 demo is `curl` + `scripts/verify-isolation.sh`. That is the right artifact for an
+The v1 demo is `curl` + `scripts/verify-eval-isolation.sh`. That is the right artifact for an
 interview — a UI proves nothing about isolation, the eval suite does. But the money shot
 (two tenants, same question, different answers, different citations) reads in five seconds
 side-by-side in a browser and requires reading JSON blobs in a terminal.
@@ -540,7 +540,7 @@ ServiceAccounts, NetworkPolicies, PVCs, Qdrant, TEI, Langfuse, eval suite.
 kubectl get nodes -o wide                      # gpu Ready, containerd 1.7.x
 bash scripts/verify.sh                         # vLLM, TEI, Qdrant all answer
 bash scripts/ingest.sh                         # idempotent, both collections populated
-bash scripts/verify-isolation.sh               # all 6 proofs pass
+bash scripts/verify-eval-isolation.sh               # all 6 proofs pass
 python eval/run_eval.py                        # leakage=0, recall>=0.90, citations=1.0
 curl -H "X-API-Key: $A_KEY" https://rag-a.<ip>.nip.io/query -d '{"q":"breach notification?"}'
 curl -H "X-API-Key: $B_KEY" https://rag-b.<ip>.nip.io/query -d '{"q":"breach notification?"}'
