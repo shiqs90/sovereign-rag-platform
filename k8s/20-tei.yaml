@@ -45,18 +45,24 @@ spec:
           args:
             - --model-id=BAAI/bge-m3
             - --port=8080
-            # Legal articles vary wildly in length. Without this, anything over the model's
-            # 8192-token window returns a 413 and the whole ingest run dies partway through.
+            # Truncates over-long inputs to the MODEL's limit (8192) — note this does NOT
+            # bound them to --max-batch-tokens below, which is a separate ceiling.
             - --auto-truncate
-            # Attention memory is QUADRATIC in sequence length, and ONNX Runtime
-            # materialises the full matrix (no flash-attention on this CPU path):
-            #   8192^2 x 16 heads x 4 bytes ~= 4.3 GB   -> OOMKilled at both 5Gi and 8Gi
-            #   2048^2 x 16 heads x 4 bytes ~= 268 MB   -> fits comfortably
-            # With --auto-truncate this caps inputs at 2048 tokens (~8k characters).
-            # Measured against the actual corpus: median article is ~1,200 chars (~350
-            # tokens) and exactly 1 of 96 articles exceeds the cap. The 8192 window was
-            # never being used — it only ever cost memory.
-            # This is a floor set by the LONGEST SINGLE INPUT, not a throughput knob.
+            # This value is squeezed between two constraints, and both must hold:
+            #
+            #   UPPER — attention memory is QUADRATIC in sequence length and ONNX Runtime
+            #   materialises the full matrix (no flash-attention on this CPU path):
+            #     8192^2 x 16 heads x 4 bytes ~= 4.3 GB  -> OOMKilled at 5Gi AND at 8Gi
+            #     6144^2 x 16 heads x 4 bytes ~= 2.4 GB  -> fits, with ~2.3 GB of weights
+            #
+            #   LOWER — it must exceed the LONGEST SINGLE INPUT. TEI cannot batch an input
+            #   larger than this ceiling and does not reject it: it HANGS, waiting for a
+            #   slot that can never exist, until the client times out. Reproduced with one
+            #   2,900-token input against a 2,048 ceiling.
+            #
+            # DIFC's longest article is 11,473 chars; 6144 covers it even at an
+            # implausible 1.9 chars/token. Setting this from the memory bound alone (2048)
+            # fixed the OOM and immediately caused the hang.
             # TEI cannot batch an input larger than this ceiling, and it does not reject
             # it — it HANGS, waiting for a slot that can never exist, until the client
             # times out. Reproduced: one 2,900-token input against a 2,048 ceiling blocked
@@ -91,11 +97,23 @@ spec:
               port: 8080
             periodSeconds: 10
             failureThreshold: 60
+          # DELIBERATELY SLACK. The default timeoutSeconds of 1 is wrong for a
+          # CPU-saturating single-replica backend: while TEI is embedding a batch (~10s of
+          # inference on 2-3 cores) /health does not answer within a second, so three
+          # probes fail, the pod is marked NotReady, and kube-proxy drops it from the
+          # Service endpoints. The in-flight ingest that CAUSED the load then gets
+          # "connection refused" from its own backend.
+          #
+          # With one replica there is nowhere else for traffic to go, so marking it
+          # unready cannot shed load — it only breaks callers. The probe should detect a
+          # dead process, not a busy one.
           readinessProbe:
             httpGet:
               path: /health
               port: 8080
-            periodSeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               memory: 4Gi

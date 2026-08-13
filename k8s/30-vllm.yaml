@@ -20,6 +20,16 @@ metadata:
   namespace: rag-platform
 spec:
   replicas: 1
+  # Recreate, NOT the default RollingUpdate. With replicas: 1 the defaults are
+  # maxSurge: 25% (rounds UP to 1) and maxUnavailable: 25% (rounds DOWN to 0), so Kubernetes
+  # must start the new pod before removing the old one. The GPU pool has exactly one node
+  # with one nvidia.com/gpu, which the old pod still holds — so the new pod sits Pending
+  # forever waiting for a resource only its own readiness would free. Deadlock.
+  #
+  # There is no availability to protect on a single-replica GPU service, so the
+  # "zero-downtime" default buys nothing and costs a hung rollout.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: vllm
@@ -57,6 +67,18 @@ spec:
             # agentic loop; harmless before it exists.
             - --enable-auto-tool-choice
             - --tool-call-parser=hermes
+            # THE T4 LANDMINE THAT SURVIVES STARTUP. Left on auto, vLLM v0.22 rejects
+            # FlashAttention-2 ("compute capability >= 8") and falls back to FLASHINFER,
+            # whose prefill kernels ALSO need SM 8.0+. Nothing fails at boot — /health
+            # passed for 37 hours — because health checks run no inference. The engine dies
+            # on the FIRST REAL PREFILL:
+            #   RuntimeError: BatchPrefillWithPagedKVCache failed with error invalid argument
+            #   vllm.v1.engine.exceptions.EngineDeadError
+            #
+            # This is a CLI FLAG in v0.22. The VLLM_ATTENTION_BACKEND env var was REMOVED —
+            # setting it produces only "Unknown vLLM environment variable detected" and is
+            # otherwise ignored, so the engine still picks FlashInfer.
+            - --attention-backend=TRITON_ATTN
           ports:
             - containerPort: 8000
           env:

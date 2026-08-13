@@ -205,6 +205,10 @@ Approximate australiacentral on-demand rates; confirm against the current price 
 | **Warm total** | **~0.98–1.10** |
 | **GPU pool scaled to 0** | **~0.38–0.42** |
 
+**Budget is $10 per project.** At ~$1.00/hr warm that is **ten hours of cluster time in
+total**, model downloads included. This platform overran it (~38h ≈ $38), almost entirely
+while components were broken but still billing.
+
 The GPU is ~60% of the burn. Scale it to zero between working sessions:
 
 ```bash

@@ -207,8 +207,10 @@ scripts/       verify.sh, ingest.sh, verify-isolation.sh
 docs/          IMPLEMENTATION-PLAN.md, instance_math.md
 ```
 
-- [`docs/STATUS.md`](docs/STATUS.md) — what is built, what is not, the next command, and the
-  decisions already settled. **Read this first when resuming.**
+- [`docs/P10-STATUS.md`](docs/P10-STATUS.md) — what is built, what is not, the next command,
+  and the decisions already settled. **Read this first when resuming.**
+- [`docs/P10-TROUBLESHOOTING.md`](docs/P10-TROUBLESHOOTING.md) — five real failures hit while
+  bringing this up, what each looked like versus what actually caused it
 - [`docs/ENHANCEMENTS.md`](docs/ENHANCEMENTS.md) — work deliberately not done, with the reason
   and the production answer for each
 - [`docs/instance_math.md`](docs/instance_math.md) — node pool sizing, regional quota ceilings,
