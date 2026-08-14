@@ -29,15 +29,26 @@ curl -s -X POST localhost:18081/query -H 'Authorization: Bearer key-b' \
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Cross-tenant trap.
-#    WHY: "Commissioner" is DIFC vocabulary and appears nowhere in PDPL. If
-#         semantic similarity alone could reach another corpus, this finds it.
-#    EXPECT: answers from PDPL only. Any DIFC citation here is a leak.
+# 2. Cross-tenant traps, both directions.
+#    WHY: each question uses the OTHER law's vocabulary. If semantic similarity
+#         alone could reach another corpus, this finds it.
+#    EXPECT: each answers from its own corpus only. Any citation to the other law
+#            is a leak.
+#    NOTE: the two behave differently, and both are correct. PDPL genuinely covers
+#          "what to report after a breach", so tenant A answers (naming the Bureau
+#          instead of the Commissioner). DIFC has no "Executive Regulations" concept
+#          at all, so tenant B refuses outright.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== TRAP — asking tenant A a DIFC-flavoured question ==="
+echo "=== TRAP — tenant A asked a DIFC-flavoured question (Commissioner) ==="
 curl -s -X POST localhost:18080/query -H 'Authorization: Bearer key-a' \
   -H 'Content-Type: application/json' \
   -d '{"question":"What must I report to the Commissioner about a personal data breach?"}' \
+  | python3 -m json.tool
+
+echo "=== TRAP — tenant B asked a PDPL-flavoured question (Executive Regulations) ==="
+curl -s -X POST localhost:18081/query -H 'Authorization: Bearer key-b' \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What do the Executive Regulations require when reporting to the Bureau?"}' \
   | python3 -m json.tool
 
 
@@ -47,9 +58,15 @@ curl -s -X POST localhost:18080/query -H 'Authorization: Bearer key-a' \
 #         tenant could read any other tenant's corpus by editing one line.
 #    EXPECT: HTTP 403.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== SPOOF — tenant A's key claiming to be tenant B ==="
+echo -n "SPOOF — tenant A's key claiming to be tenant B: "
 curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST localhost:18080/query \
   -H 'Authorization: Bearer key-a' -H 'X-Tenant: tenant-b' \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What are my breach notification obligations?"}'
+
+echo -n "SPOOF — tenant B's key claiming to be tenant A: "
+curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST localhost:18081/query \
+  -H 'Authorization: Bearer key-b' -H 'X-Tenant: tenant-a' \
   -H 'Content-Type: application/json' \
   -d '{"question":"What are my breach notification obligations?"}'
 
@@ -61,8 +78,12 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST localhost:18080/query \
 #            retrieved_article_ids=[] and latency_ms=0, i.e. refused BEFORE any
 #            search ran. The question is stored only as a sha256, never verbatim.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== AUDIT — last entry only (the spoof) ==="
+echo "=== AUDIT — tenant A, last entry (its spoof attempt) ==="
 curl -s localhost:18080/audit -H 'Authorization: Bearer key-a' \
+  | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)[-1], indent=2))'
+
+echo "=== AUDIT — tenant B, last entry (its spoof attempt) ==="
+curl -s localhost:18081/audit -H 'Authorization: Bearer key-b' \
   | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)[-1], indent=2))'
 
 
@@ -113,10 +134,10 @@ except Exception as e: print(type(e).__name__)'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. The allowed paths still work.
-#    WHY: a default-deny that blocks everything is trivial. The result that matters
-#         is blocking cross-tenant traffic while the platform still functions.
-#    EXPECT: qdrant / tei / vllm all OK, then a real answer citing UAE PDPL Art.9.
+# 8. The allowed paths are still open.
+#    WHY: a default-deny that blocks everything is trivial — block 1 already proved
+#         the platform works, so this just makes the allow-list visible.
+#    EXPECT: qdrant / tei / vllm all OK.
 #    NOTE: NetworkPolicy ports are POD ports, not Service ports — the TEI Service is
 #          80 but its pod listens on 8080, so the egress rule must say 8080.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,9 +155,3 @@ for name, url in [("qdrant","http://qdrant.rag-platform:6333/readyz"),
     except Exception as e:
         print(f"{name:8} FAIL {type(e).__name__} {round(time.time()-t,1)}s")
 '
-
-echo "=== tenant-a still retrieves its own corpus ==="
-curl -s -X POST localhost:18080/query -H 'Authorization: Bearer key-a' \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"What are my breach notification obligations?"}' \
-  | python3 -c 'import sys,json; print("citations:", json.load(sys.stdin)["citations"])'
