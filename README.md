@@ -39,11 +39,7 @@ layers, and the evaluation suite fails the build if any of them leaks.
 
 ![Sovereign multi-tenant RAG on AKS](docs/diagrams/sovereign-rag-aks.png)
 
-Source: [`docs/diagrams/sovereign-rag-aks.py`](docs/diagrams/sovereign-rag-aks.py) — the diagram
-is code, so it changes when the system does. Re-render with
-`python3 docs/diagrams/sovereign-rag-aks.py`.
-
-**Reading it.** Boxes are coloured by ownership: grey is outside the sovereign boundary, blue
+**Description.** Boxes are coloured by ownership: grey is outside the sovereign boundary, blue
 is Azure-managed, green is the AKS data plane, white are namespaces you own. Arrows are
 coloured by *whose request it is*: **teal is tenant-a, purple is tenant-b, black is shared by
 both, red is a call that must fail.** Numbers 1–8 follow tenant-a's question end to end;
