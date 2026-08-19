@@ -18,4 +18,7 @@ crash.*.log
 
 # uv-files
 uv.lock
-docs/
+# docs/* rather than docs/ : git cannot re-include a path whose PARENT directory is
+# excluded, so the negation below only works if docs/ itself stays un-excluded.
+docs/*
+!docs/diagrams/

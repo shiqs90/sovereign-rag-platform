@@ -37,23 +37,34 @@ layers, and the evaluation suite fails the build if any of them leaks.
 
 ## Architecture
 
-```
-                        Ingress (nginx) + TLS (self-signed CA)
-                    rag-a.<ip>.nip.io    rag-b.<ip>.nip.io
-                            │                    │
-              ns: tenant-a  ▼        ns: tenant-b ▼
-              ┌──────────────────┐  ┌──────────────────┐
-              │ rag-service      │  │ rag-service      │  own ServiceAccount,
-              │ SA + Secret      │  │ SA + Secret      │  Role, Secret, NetworkPolicy
-              └────┬────┬────┬───┘  └───┬────┬────┬────┘
-                   │    │    │          │    │    │
-              ns: rag-platform ─────────┴────┴────┴──────
-              ┌────────┐ ┌──────┐ ┌──────────┐ ┌──────────┐
-              │ vLLM   │ │ TEI  │ │ Qdrant   │ │ Langfuse │
-              │ (GPU)  │ │(CPU) │ │ 2 collns │ │ +Postgres│
-              └────────┘ └──────┘ └──────────┘ └──────────┘
-                  all ClusterIP — never exposed externally
-```
+![Sovereign multi-tenant RAG on AKS](docs/diagrams/sovereign-rag-aks.png)
+
+Source: [`docs/diagrams/sovereign-rag-aks.py`](docs/diagrams/sovereign-rag-aks.py) — the diagram
+is code, so it changes when the system does. Re-render with
+`python3 docs/diagrams/sovereign-rag-aks.py`.
+
+**Reading it.** Boxes are coloured by ownership: grey is outside the sovereign boundary, blue
+is Azure-managed, green is the AKS data plane, white are namespaces you own. Arrows are
+coloured by *whose request it is*: **teal is tenant-a, purple is tenant-b, black is shared by
+both, red is a call that must fail.** Numbers 1–8 follow tenant-a's question end to end;
+tenant-b's path is deliberately unnumbered because it is identical apart from the collection.
+
+Three things the picture is there to make obvious:
+
+- **Teal and purple arrive at the same TEI, Qdrant and vLLM nodes and still never mix.** That
+  is the whole thesis — shared compute, non-shared data.
+- **The only stretch genuinely shared inbound is the load balancer and the nginx controller.**
+  Separation begins at the `Host` header, not before it.
+- **The three isolation layers fail in three different places.** Network is dropped pod-to-pod
+  inside the data plane; RBAC is refused by the *API server*, which is why that denial routes
+  through the control-plane box rather than pod-to-Secret; the data-plane filter happens
+  *inside the retriever*, so it is written on edge 6 rather than drawn as a box.
+
+Line style carries meaning too: solid is the request path, dashed is an identity being
+presented (an API key, a ServiceAccount token), dotted is standing background that is true all
+the time and part of no single request.
+
+All platform services are ClusterIP — never exposed externally.
 
 | Layer | Isolation mechanism | How it's proven |
 |---|---|---|
@@ -204,7 +215,7 @@ app/           FastAPI RAG service — /ingest, /query, /healthz, /audit
 corpus/        Normalised legal texts (## Article N — Title)
 eval/          questions.yaml + run_eval.py
 scripts/       verify.sh, ingest.sh, verify-eval-isolation.sh
-docs/          IMPLEMENTATION-PLAN.md, instance_math.md
+docs/          IMPLEMENTATION-PLAN.md, instance_math.md, diagrams/ (architecture as code)
 ```
 
 - [`docs/P10-STATUS.md`](docs/P10-STATUS.md) — what is built, what is not, the next command,
